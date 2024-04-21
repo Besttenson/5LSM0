@@ -32,6 +32,7 @@ from torchsummary import summary
 
     return parser"""
 
+data_path = "E:\download\data"
 
 class CityScapesDataset(Cityscapes):
     def __init__(self, root: str,
@@ -237,10 +238,10 @@ mytransformsLabel = transform.Compose(
     ]
 )
 
-train_dataset = CityScapesDataset(root="E:\download\data", split='train', mode='fine',
+train_dataset = CityScapesDataset(root=data_path, split='train', mode='fine',
                                   target_type='semantic', transform=mytransformsImage,
                                   target_transform=mytransformsLabel)
-val_dataset = CityScapesDataset(root="E:\download\data", split='val', mode='fine',
+val_dataset = CityScapesDataset(root=data_path, split='val', mode='fine',
                                 target_type='semantic', transform=mytransformsImage, target_transform=mytransformsLabel)
 """# Parameters
 total_size = len(dataset)
