@@ -1,108 +1,153 @@
+import numpy as np
 import torch
 import torch.nn as nn
+from torchvision import models
+import torch.nn.functional as F
 
 """ segmentation model example
 """
 
-class Model(nn.Module):
-    def __init__(self):
-        super().__init__()
 
-        """ Encoder """
-        self.e1 = encoder_block(3, 64)
-        self.e2 = encoder_block(64, 128)
-        self.e3 = encoder_block(128, 256)
-        self.e4 = encoder_block(256, 512)
+class Atrous_Convolution(nn.Module):
+    """
+  Compute Atrous/Dilated Convolution.
+    """
 
-        """ Bottleneck """
-        self.b = conv_block(512, 1024)
+    def __init__(
+            self, input_channels, kernel_size, pad, dilation_rate,
+            output_channels=256):
+        super(Atrous_Convolution, self).__init__()
 
-        """ Decoder """
-        self.d1 = decoder_block(1024, 512)
-        self.d2 = decoder_block(512, 256)
-        self.d3 = decoder_block(256, 128)
-        self.d4 = decoder_block(128, 64)
+        self.conv = nn.Conv2d(in_channels=input_channels,
+                              out_channels=output_channels,
+                              kernel_size=kernel_size, padding=pad,
+                              dilation=dilation_rate, bias=False)
 
-        """ Classifier """
-        self.outputs = nn.Conv2d(64, 34, kernel_size=1, padding=0)
+        self.batchnorm = nn.BatchNorm2d(output_channels)
 
-    def forward(self, inputs):
-        """ Encoder """
-        s1, p1 = self.e1(inputs)
-        s2, p2 = self.e2(p1)
-        s3, p3 = self.e3(p2)
-        s4, p4 = self.e4(p3)
+        self.relu = nn.ReLU(inplace=True)
 
-        """ Bottleneck """
-        b = self.b(p4)
-
-        """ Decoder """
-        d1 = self.d1(b, s4)
-        d2 = self.d2(d1, s3)
-        d3 = self.d3(d2, s2)
-        d4 = self.d4(d3, s1)
-
-        """ Segmentation output """
-        outputs = self.outputs(d4)
-
-        return outputs
-
-
-class conv_block(nn.Module):
-    def __init__(self, in_c, out_c):
-        super().__init__()
-
-        self.conv1 = nn.Conv2d(in_c, out_c, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm2d(out_c)
-
-        self.conv2 = nn.Conv2d(out_c, out_c, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm2d(out_c)
-
-        self.relu = nn.ReLU()
-
-    def forward(self, inputs):
-        x = self.conv1(inputs)
-        x = self.bn1(x)
-        x = self.relu(x)
-
-        x = self.conv2(x)
-        x = self.bn2(x)
-        x = self.relu(x)
-
-        return x
-
-""" Encoder block:
-    It consists of an conv_block followed by a max pooling.
-    Here the number of filters doubles and the height and width half after every block.
-"""
-class encoder_block(nn.Module):
-    def __init__(self, in_c, out_c):
-        super().__init__()
-
-        self.conv = conv_block(in_c, out_c)
-        self.pool = nn.MaxPool2d((2, 2))
-
-    def forward(self, inputs):
-        x = self.conv(inputs)
-        p = self.pool(x)
-
-        return x, p
-
-""" Decoder block:
-    The decoder block begins with a transpose convolution, followed by a concatenation with the skip
-    connection from the encoder block. Next comes the conv_block.
-    Here the number filters decreases by half and the height and width doubles.
-"""
-class decoder_block(nn.Module):
-    def __init__(self, in_c, out_c):
-        super().__init__()
-
-        self.up = nn.ConvTranspose2d(in_c, out_c, kernel_size=2, stride=2, padding=0)
-        self.conv = conv_block(out_c+out_c, out_c)
-
-    def forward(self, inputs, skip):
-        x = self.up(inputs)
-        x = torch.cat([x, skip], dim=1)
+    def forward(self, x):
         x = self.conv(x)
-
+        x = self.batchnorm(x)
+        x = self.relu(x)
         return x
+
+
+class ASSP(nn.Module):
+    """
+   Encoder of DeepLabv3+.
+    """
+
+    def __init__(self, in_channles, out_channles):
+        """Atrous Spatial Pyramid pooling layer
+        Args:
+            in_channles (int): No of input channel for Atrous_Convolution.
+            out_channles (int): No of output channel for Atrous_Convolution.
+        """
+        super(ASSP, self).__init__()
+        self.conv_1x1 = Atrous_Convolution(
+            input_channels=in_channles, output_channels=out_channles,
+            kernel_size=1, pad=0, dilation_rate=1)
+
+        self.conv_6x6 = Atrous_Convolution(
+            input_channels=in_channles, output_channels=out_channles,
+            kernel_size=3, pad=6, dilation_rate=6)
+
+        self.conv_12x12 = Atrous_Convolution(
+            input_channels=in_channles, output_channels=out_channles,
+            kernel_size=3, pad=12, dilation_rate=12)
+
+        self.conv_18x18 = Atrous_Convolution(
+            input_channels=in_channles, output_channels=out_channles,
+            kernel_size=3, pad=18, dilation_rate=18)
+
+        self.image_pool = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(
+                in_channels=in_channles, out_channels=out_channles,
+                kernel_size=1, stride=1, padding=0, dilation=1, bias=False),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True))
+
+        self.final_conv = Atrous_Convolution(
+            input_channels=out_channles * 5, output_channels=out_channles,
+            kernel_size=1, pad=0, dilation_rate=1)
+
+    def forward(self, x):
+        x_1x1 = self.conv_1x1(x)
+        x_6x6 = self.conv_6x6(x)
+        x_12x12 = self.conv_12x12(x)
+        x_18x18 = self.conv_18x18(x)
+        img_pool_opt = self.image_pool(x)
+        img_pool_opt = F.interpolate(
+            img_pool_opt, size=x_18x18.size()[2:],
+            mode='bilinear', align_corners=True)
+        # concatination of all features
+        concat = torch.cat(
+            (x_1x1, x_6x6, x_12x12, x_18x18, img_pool_opt),
+            dim=1)
+        x_final_conv = self.final_conv(concat)
+        return x_final_conv
+
+
+class ResNet_152(nn.Module):
+    def __init__(self, output_layer=None):
+        super(ResNet_152, self).__init__()
+        self.pretrained = models.resnet152(pretrained=True)
+        self.output_layer = output_layer
+        self.layers = list(self.pretrained._modules.keys())
+        self.layer_count = 0
+        for l in self.layers:
+            if l != self.output_layer:
+                self.layer_count += 1
+            else:
+                break
+        for i in range(1, len(self.layers) - self.layer_count):
+            self.dummy_var = self.pretrained._modules.pop(self.layers[-i])
+        self.net = nn.Sequential(self.pretrained._modules)
+        self.pretrained = None
+
+    def forward(self, x):
+        x = self.net(x)
+        return x
+
+
+class Model(nn.Module):
+    def __init__(self, num_classes=19):
+        super(Model, self).__init__()
+
+        self.backbone = ResNet_152(output_layer='layer3')
+
+        self.low_level_features = ResNet_152(output_layer='layer1')
+
+        self.assp = ASSP(in_channles=1024, out_channles=256)
+
+        self.conv1x1 = Atrous_Convolution(
+            input_channels=256, output_channels=48, kernel_size=1,
+            dilation_rate=1, pad=0)
+
+        self.conv_3x3 = nn.Sequential(
+            nn.Conv2d(304, 256, 3, padding=1, bias=False),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True)
+        )
+
+        self.classifer = nn.Conv2d(256, num_classes, 1)
+
+    def forward(self, x):
+        x_backbone = self.backbone(x)
+        x_low_level = self.low_level_features(x)
+        x_assp = self.assp(x_backbone)
+        x_assp_upsampled = F.interpolate(
+            x_assp, scale_factor=(4, 4),
+            mode='bilinear', align_corners=True)
+        x_conv1x1 = self.conv1x1(x_low_level)
+        x_cat = torch.cat([x_conv1x1, x_assp_upsampled], dim=1)
+        x_3x3 = self.conv_3x3(x_cat)
+        x_3x3_upscaled = F.interpolate(
+            x_3x3, scale_factor=(4, 4),
+            mode='bilinear', align_corners=True)
+        x_out = self.classifer(x_3x3_upscaled)
+        return x_out
+
