@@ -33,4 +33,5 @@ Here's a brief overview of the files you'll find in this repository:
 - run_main.sh: Includes the code for tuning the hyperparameters and run the project.
 
 # Author
-Yue Teng (1825933)
+Yue Teng (y.teng@student.tue.nl)
+Codalab name: dragontenson
