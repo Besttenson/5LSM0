@@ -20,7 +20,7 @@ If you wan to run the shell file on Windows, you need to first install the git b
 ```
 git clone https://github.com/git/git
 ```
-
+Or you can run the test branch by running the main.py. You only need to change the data_path to your own data repository on line 35.
 ## File Descriptions:
 Here's a brief overview of the files you'll find in this repository:
 - baseline.py: Contains the baseline model
